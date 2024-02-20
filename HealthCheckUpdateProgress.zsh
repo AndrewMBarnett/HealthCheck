@@ -72,7 +72,14 @@ estimatedTotalSeconds="${5:-"120"}"
 # Parameter 6: Operation Mode [ Default (i.e., delayed inventory update with swiftDialog progress) | Self Service | Silent | Uninstall ]
 operationMode="${6:-""}"
 
+# Parameter 7: Enables the webhook feature [ true | false ]
+webhookEnabled="${7:-""}"
 
+# Paramter 8: Teams webhook URL 
+teamsURL="${8:-""}"
+
+# Paramter 9: Slack webhook URL 
+slackURL="${9:-""}"
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Organization Variables
