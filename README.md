@@ -22,3 +22,4 @@ Health Check examples:
 <img width="712" alt="HealthCheck-StartUp" src="https://github.com/AndrewMBarnett/HealthCheck/assets/138056529/3bf173c6-f41a-4955-be3e-684615f0b454">
 <img width="712" alt="HealthCheck-SubmitInventory" src="https://github.com/AndrewMBarnett/HealthCheck/assets/138056529/4314ab6f-d6c9-41c1-bcd3-4dcf4d18ec34">
 <img width="712" alt="HealthCheck-Complete" src="https://github.com/AndrewMBarnett/HealthCheck/assets/138056529/10f137f4-61b9-4097-abbc-c787ad818821">
+<img width="712" alt="HealthCheck-HelpMessage" src="https://github.com/AndrewMBarnett/HealthCheck/assets/138056529/a9fc2e06-32d2-44f7-b43d-51f264e87ebb">
