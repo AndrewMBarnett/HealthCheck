@@ -5,6 +5,7 @@
 #
 #   Health Check Update Progress with swiftDialog
 #   Inventory, Policy Check In, Jamf Protect Check In
+#   https://github.com/AndrewMBarnett/HealthCheck
 #
 ####################################################################################################
 #
