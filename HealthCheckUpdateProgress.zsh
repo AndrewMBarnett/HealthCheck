@@ -63,7 +63,7 @@ secondsToWait="${4:-"86400"}"
 # Parameter 5: Estimated Total Seconds
 estimatedTotalSeconds="${5:-"120"}"
 
-# Parameter 6: Operation Mode [ Default (i.e., delayed inventory update with swiftDialog progress) | Self Service | Silent | Uninstall ]
+# Parameter 6: Operation Mode [ Inventory | Inventory Force | Policy | Policy Force | Protect | Protect Force |  Self Service | Silent | Uninstall ]
 operationMode="${6:-""}"
 
 # Parameter 7: Enables the webhook feature [ true | false ]
