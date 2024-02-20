@@ -70,7 +70,7 @@ secondsToWait="${4:-"86400"}"
 estimatedTotalSeconds="${5:-"120"}"
 
 # Parameter 6: Operation Mode [ Default (i.e., delayed inventory update with swiftDialog progress) | Self Service | Silent | Uninstall ]
-operationMode="${6:-"Policy Force"}"
+operationMode="${6:-""}"
 
 
 
