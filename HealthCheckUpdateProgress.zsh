@@ -50,13 +50,6 @@ modelName=$( /usr/libexec/PlistBuddy -c 'Print :0:_items:0:machine_name' /dev/st
 
 #Jamf Pro Variables
 jamfProURL=$(/usr/bin/defaults read /Library/Preferences/com.jamfsoftware.jamf.plist jss_url)
-jamfProComputerURL="${jamfProURL}/computers.html?query=${serialNumber}&queryType=COMPUTER"
-
-### Webhook Options ###
-
-webhookEnabled="false"                                                          # Enables the webhook feature [ true | false (default) ]
-teamsURL=""                                                                     # Teams webhook URL                         
-slackURL=""                                                                     # Slack webhook URL
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Jamf Pro Script Parameters
@@ -399,7 +392,7 @@ preFlight "Complete!"
 
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Update Inventory, showing progress via swiftDialog
+# Setup List for Health Check Window
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
 function buildHealthCheckWindow() {
@@ -441,6 +434,9 @@ function buildHealthCheckWindow() {
 
 }
 
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# "Health Check" dialog
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
 function recon() {
 
@@ -474,9 +470,25 @@ function recon() {
         updateDialog "listitem: title: Taking Inventory, statustext: Complete, status: success"
 }
 
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# "Health Check" dialog
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+function policyErrorCheck(){
+
+            error "Jamf was already checking in. Sending message to try Health Check again."
+
+            dialogPolicyError="$dialogBinary \ 
+            --title \"$title\" \
+            --icon \"$icon\" \
+            --overlayicon \"$overlayIcon\" \
+            --message \"Jamf was already checking in. Please run Health Check again\" \
+            --windowbuttons min \
+            --moveable \
+            --position topright \
+            --timer 60 \
+            --quitkey k \
+            --button1text \"Close\" \
+            --hidetimerbar \
+            --style \"mini\" "
+
+}
 
 function policyCheckIn(){
 
@@ -484,7 +496,7 @@ function policyCheckIn(){
 
     SECONDS="0"
 
-    /usr/local/bin/jamf policy -verbose >> "$inventoryLog" &
+    /usr/local/bin/jamf policy -verbose -forceNoRecon >> "$inventoryLog" &
 
     counterPolicy=0
 
@@ -504,25 +516,8 @@ function policyCheckIn(){
         policyError=$( tail -n1 "$inventoryLog" | grep 'Policy error code: 51')
 
         if [[ -n "$policyError" ]]; then
-
-            error "Jamf was already checking in. Sending message to try Health Check again."
-
-            dialogPolicyError="$dialogBinary \ 
-            --title \"$title\" \
-            --icon \"$icon\" \
-            --overlayicon \"$overlayIcon\" \
-            --message \"Jamf was already checking in. Please run Health Check again\" \
-            --windowbuttons min \
-            --moveable \
-            --position topright \
-            --timer 60 \
-            --quitkey k \
-            --button1text \"Close\" \
-            --hidetimerbar \
-            --style \"mini\" "
-            
-            exitCode 1
-        
+            policyErrorCheck
+            quitScript
         fi
 
     inventoryProgressText=$( tail -n1 "$inventoryLog" | sed -e 's/verbose: //g' -e 's/Removing existing launchd task \/Library\/LaunchDaemons\/com.jamfsoftware.task.bgrecon.plist... //g')
