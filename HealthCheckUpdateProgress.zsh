@@ -31,7 +31,7 @@
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 
 # Script Version & Client-side Log
-scriptVersion="1.0.0"
+scriptVersion="1.1.0"
 scriptLog="/var/log/healthCheckTest.log"
 
 # Display an inventory progress dialog, even if an inventory update is not required
