@@ -114,6 +114,10 @@ if [[ -n $osVersionExtra ]] && [[ "${osMajorVersion}" -ge 13 ]]; then osVersion=
 
 ### Desktop/Laptop Icon ###
 
+# Install SF Symbols if it is not found [ true | false (default) ]
+# If you want to install it in the script, add a policy call to around line 329. (example: /usr/local/jamf/bin/jamf policy -event sfSymbols -forceNoRecon)
+sfSymbols="false" 
+
 # Set icon based on whether the Mac is a desktop or laptop
 if system_profiler SPPowerDataType | grep -q "Battery Power"; then
     icon="SF=laptopcomputer.and.arrow.down,weight=regular,colour1=black,colour2=white"
@@ -268,9 +272,8 @@ fi
 # Pre-flight Check: Logging Preamble
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-preFlight "\n\n###\n# $humanReadableScriptName (${scriptVersion})"
+preFlight "\n\n###\n# $humanReadableScriptName (${scriptVersion})\n# https://github.com/AndrewMBarnett/HealthCheck\n###\n"
 preFlight "Initiating …"
-
 
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -293,7 +296,120 @@ else
     fatal "The specified Organization Directory of is NOT found; exiting."
 fi
 
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Validate / install SF Symbols
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
+function sfSymbolsCase(){
+
+case ${sfSymbols} in
+
+    "true" ) # Install SF Symbols 
+        preFlight "Sf Symbols flag set to: ${sfSymbols}, continuing ..."
+            sfSymbolsCheck
+    ;;
+    "false" ) # Don't Install SF Symbols
+        preFlight "Sf Symbols flag set to: ${sfSymbols}, skipping ..."
+    ;;
+
+    * ) # Catch-all
+        preFlight "Sf Symbols flag set to: ${sfSymbols}, skipping ..."
+        ;;
+
+esac
+
+}
+
+function sfSymbolsCheck() {
+
+      # Check for SF Symbols and install if not found
+    if [[ -e "/Applications/SF Symbols.app/Contents/MacOS/SF Symbols" ]]; then
+        preFlight "SF Symbols found. Continuing"
+    else
+        preFlight "SF Symbols not found. Installing"
+        
+        preFlight "SF Symbols installed."
+    fi
+
+}
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Validate / install swiftDialog (Thanks big bunches, @acodega!)
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+function dialogInstall() {
+
+    # Get the URL of the latest PKG From the Dialog GitHub repo
+    dialogURL=$(curl -L --silent --fail "https://api.github.com/repos/swiftDialog/swiftDialog/releases/latest" | awk -F '"' "/browser_download_url/ && /pkg\"/ { print \$4; exit }")
+
+    # Expected Team ID of the downloaded PKG
+    expectedDialogTeamID="PWA5E9TQ59"
+
+    preFlight "Installing swiftDialog..."
+
+    # Create temporary working directory
+    workDirectory=$( /usr/bin/basename "$0" )
+    tempDirectory=$( /usr/bin/mktemp -d "/private/tmp/$workDirectory.XXXXXX" )
+
+    # Download the installer package
+    /usr/bin/curl --location --silent "$dialogURL" -o "$tempDirectory/Dialog.pkg"
+
+    # Verify the download
+    teamID=$(/usr/sbin/spctl -a -vv -t install "$tempDirectory/Dialog.pkg" 2>&1 | awk '/origin=/ {print $NF }' | tr -d '()')
+
+    # Install the package if Team ID validates
+    if [[ "$expectedDialogTeamID" == "$teamID" ]]; then
+
+        /usr/sbin/installer -pkg "$tempDirectory/Dialog.pkg" -target /
+        sleep 2
+        dialogVersion=$( /usr/local/bin/dialog --version )
+        preFlight "swiftDialog version ${dialogVersion} installed; proceeding..."
+
+    else
+
+        # Display a so-called "simple" dialog if Team ID fails to validate
+        osascript -e 'display dialog "Please advise your Support Representative of the following error:\r\r• Dialog Team ID verification failed\r\r" with title "Setup Your Mac: Error" buttons {"Close"} with icon caution'
+        completionActionOption="Quit"
+        exitCode="1"
+        quitScript
+
+    fi
+
+    # Remove the temporary working directory when done
+    /bin/rm -Rf "$tempDirectory"
+
+}
+
+
+
+function dialogCheck() {
+
+    # Output Line Number in `verbose` Debug Mode
+    if [[ "${debugMode}" == "verbose" ]]; then preFlight "# # # SETUP YOUR MAC VERBOSE DEBUG MODE: Line No. ${LINENO} # # #" ; fi
+
+    # Check for Dialog and install if not found
+    if [ ! -e "/Library/Application Support/Dialog/Dialog.app" ]; then
+
+        preFlight "swiftDialog not found. Installing..."
+        dialogInstall
+
+    else
+
+        dialogVersion=$(/usr/local/bin/dialog --version)
+        if [[ "${dialogVersion}" < "${swiftDialogMinimumRequiredVersion}" ]]; then
+            
+            preFlight "swiftDialog version ${dialogVersion} found but swiftDialog ${swiftDialogMinimumRequiredVersion} or newer is required; updating..."
+            dialogInstall
+            
+        else
+
+        preFlight "swiftDialog version ${dialogVersion} found; proceeding..."
+
+        fi
+    
+    fi
+
+}
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Pre-flight Check: Validate Operating System
@@ -301,6 +417,7 @@ fi
 
 if [[ "${osMajorVersion}" -ge 12 ]] ; then
     preFlight "macOS ${osMajorVersion} installed; proceeding ..."
+    sfSymbolsCase
     dialogCheck
 else
     preFlight "macOS ${osMajorVersion} installed; updating inventory sans progress …"
@@ -669,86 +786,6 @@ function selfServiceInventoryUpdate() {
 function jamfDisplayMessage() {
     updateScriptLog "Jamf Display Message: ${1}"
     /usr/local/jamf/bin/jamf displayMessage -message "${1}" &
-}
-
-
-
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Validate / install swiftDialog (Thanks big bunches, @acodega!)
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-
-function dialogInstall() {
-
-    # Get the URL of the latest PKG From the Dialog GitHub repo
-    dialogURL=$(curl -L --silent --fail "https://api.github.com/repos/swiftDialog/swiftDialog/releases/latest" | awk -F '"' "/browser_download_url/ && /pkg\"/ { print \$4; exit }")
-
-    # Expected Team ID of the downloaded PKG
-    expectedDialogTeamID="PWA5E9TQ59"
-
-    preFlight "Installing swiftDialog..."
-
-    # Create temporary working directory
-    workDirectory=$( /usr/bin/basename "$0" )
-    tempDirectory=$( /usr/bin/mktemp -d "/private/tmp/$workDirectory.XXXXXX" )
-
-    # Download the installer package
-    /usr/bin/curl --location --silent "$dialogURL" -o "$tempDirectory/Dialog.pkg"
-
-    # Verify the download
-    teamID=$(/usr/sbin/spctl -a -vv -t install "$tempDirectory/Dialog.pkg" 2>&1 | awk '/origin=/ {print $NF }' | tr -d '()')
-
-    # Install the package if Team ID validates
-    if [[ "$expectedDialogTeamID" == "$teamID" ]]; then
-
-        /usr/sbin/installer -pkg "$tempDirectory/Dialog.pkg" -target /
-        sleep 2
-        dialogVersion=$( /usr/local/bin/dialog --version )
-        preFlight "swiftDialog version ${dialogVersion} installed; proceeding..."
-
-    else
-
-        # Display a so-called "simple" dialog if Team ID fails to validate
-        osascript -e 'display dialog "Please advise your Support Representative of the following error:\r\r• Dialog Team ID verification failed\r\r" with title "Setup Your Mac: Error" buttons {"Close"} with icon caution'
-        completionActionOption="Quit"
-        exitCode="1"
-        quitScript
-
-    fi
-
-    # Remove the temporary working directory when done
-    /bin/rm -Rf "$tempDirectory"
-
-}
-
-
-
-function dialogCheck() {
-
-    # Output Line Number in `verbose` Debug Mode
-    if [[ "${debugMode}" == "verbose" ]]; then preFlight "# # # SETUP YOUR MAC VERBOSE DEBUG MODE: Line No. ${LINENO} # # #" ; fi
-
-    # Check for Dialog and install if not found
-    if [ ! -e "/Library/Application Support/Dialog/Dialog.app" ]; then
-
-        preFlight "swiftDialog not found. Installing..."
-        dialogInstall
-
-    else
-
-        dialogVersion=$(/usr/local/bin/dialog --version)
-        if [[ "${dialogVersion}" < "${swiftDialogMinimumRequiredVersion}" ]]; then
-            
-            preFlight "swiftDialog version ${dialogVersion} found but swiftDialog ${swiftDialogMinimumRequiredVersion} or newer is required; updating..."
-            dialogInstall
-            
-        else
-
-        preFlight "swiftDialog version ${dialogVersion} found; proceeding..."
-
-        fi
-    
-    fi
-
 }
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
