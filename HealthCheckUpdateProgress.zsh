@@ -760,22 +760,28 @@ function jamfProURL(){
 if grep -q "$search_text" "$scriptLog" ; then
     jamfProComputerURL=$(grep "$search_text" "$scriptLog"| tail -n 1| awk -F 'Jamf Computer URL:' '{print $2}' | awk '{$1=$1};1')
 
-        if [ -n "$jamfProComputerURL" ]; then
-        infoOut "Found, Jamf Computer URL: $jamfProComputerURL"
-        else
-        infoOut "Jamf Computer URL not found in the script log."
+        if [ ! -n "$jamfProComputerURL" ]; then
+            infoOut "Jamf Computer URL not found in the script log. Searching Inventory Log"
+            # Extracting computer IDs from the last 100 lines of the log file
+            computerID=$(tail -n 100 "$inventoryLog" | grep -o '<computer_id>[^<]*</computer_id>' | sed -n 's/.*<computer_id>\(.*\)<\/computer_id>.*/\1/p' | tail -n 1)
+            infoOut "Computer ID is: $computerID"
+            # Check if computer ID is empty
+                if [ -z "$computerID" ]; then
+                infoOut "Error: No computer ID found in the log file."
+                fi
+            # Constructing the Jamf Computer URL
+            jamfProComputerURL="${jamfProURL}computers.html?id=${computerID}&o=r"
+            # Jamf Computer URL
+            infoOut "Jamf Computer URL: $jamfProComputerURL"
+            else
+            infoOut "Found, Jamf Computer URL: $jamfProComputerURL"
         fi
-    
 else
-
-    infoOut "Jamf Pro URL not found, searching now"
-
-    reconRaw=$( eval "${jamfBinary} recon ${reconOptions} -verbose | tee -a ${inventoryLog}" )
-    computerID=$( echo "${reconRaw}" | grep '<computer_id>' | xmllint --xpath xmllint --xpath '/computer_id/text()' - )
-    jamfProComputerURL="${jamfProURL}computers.html?id=${computerID}&o=r"
-
-    infoOut "Jamf Computer URL: $jamfProComputerURL"
-
+        infoOut "Jamf Pro URL still not found, searching now with full recon"
+        reconRaw=$( eval "${jamfBinary} recon ${reconOptions} -verbose | tee -a ${inventoryLog}" )
+        computerID=$( echo "${reconRaw}" | grep '<computer_id>' | xmllint --xpath xmllint --xpath '/computer_id/text()' - )
+        jamfProComputerURL="${jamfProURL}computers.html?id=${computerID}&o=r"
+        infoOut "Jamf Computer URL: $jamfProComputerURL"
 fi   
 
 }
