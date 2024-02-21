@@ -15,6 +15,8 @@
 #   - Webhook enabled for notifications
 #   - Timing for 'Fresh' or 'Stale' check in with Jamf Pro. Check Dan Snelson's post on more details(https://snelson.us/2024/02/inventory-update-progress/)
 #   
+# Version 1.1.0 - 02/21/2024
+#   - Updated jamfproURL function to be able to find the computer URL without having to do another full recon
 #
 ####################################################################################################
 
