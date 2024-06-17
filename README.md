@@ -2,7 +2,7 @@
 
 Health Check is a script to update progress with swiftDialog including Inventory, Policy Check In, Jamf Protect Check In.
 
-Macadmins Slack channel ([#healthcheck](https://macadmins.slack.com/archives/C03LKQ8EN2C))
+Macadmins Slack channel ([#healthcheck](https://macadmins.slack.com/archives/C078DHD29K7))
 
 This project is heavily inspired from Dan Snelson's project ([Inventory Update Progress](https://snelson.us/2024/02/inventory-update-progress-2/))
 
