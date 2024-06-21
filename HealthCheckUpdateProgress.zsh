@@ -1,5 +1,4 @@
-#!/bin/zsh 
-# shellcheck shell=bash
+#!/bin/zsh --no-rcs
 
 ####################################################################################################
 #
@@ -18,6 +17,12 @@
 # Version 1.1.0 - 02/21/2024
 #   - Updated jamfproURL function to be able to find the computer URL without having to do another full recon
 #
+# Version 1.2.0 - 06/21/2024
+#   - Updated Pre-Flight macOS check to include policy check-in
+#   - Added functions 'toggleJamfLaunchDaemonOn' and 'toggleJamfLaunchDaemonOff' to avoid issues with the binary attempting to check-in during the Health Check
+#   - Added `--no-rcs` to shebang of script. This addresses CVE-2024-27301. https://nvd.nist.gov/vuln/detail/CVE-2024-27301/change-record?changeRecordedOn=03/14/2024T15:15:50.680-0400
+#   - Added Jamf script parameter to show either stock progress text or read the log file in dialog window progress text
+#
 ####################################################################################################
 
 
@@ -31,7 +36,7 @@
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 
 # Script Version & Client-side Log
-scriptVersion="1.1.0"
+scriptVersion="1.2.0"
 scriptLog="/var/log/healthCheckTest.log"
 
 # Display an inventory progress dialog, even if an inventory update is not required
@@ -76,6 +81,9 @@ teamsURL="${8:-""}"
 
 # Paramter 9: Slack webhook URL 
 slackURL="${9:-""}"
+
+# Paramter 10: Update progress text to either be reading off the running log file (true) or to only show set progress text to display at each step (false) [ true | false (default) ]
+dialogProgressText="${10:-"false"}"
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Organization Variables
@@ -422,6 +430,7 @@ if [[ "${osMajorVersion}" -ge 12 ]] ; then
 else
     preFlight "macOS ${osMajorVersion} installed; updating inventory sans progress …"
     /usr/local/bin/jamf recon -endUsername "${loggedInUser}" --verbose >> "$inventoryLog" &
+    /usr/local/bin/jamf policy -endUsername "${loggedInUser}" --verbose >> "$inventoryLog" &
     exit 0
 fi
 
@@ -505,11 +514,50 @@ preFlight "Check for Logged-in System Accounts …"
 currentLoggedInUser
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# Pre-flight Check: Toggle `jamf` binary check-in (thanks, @robjschroeder!)
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+function toggleJamfLaunchDaemonOff() {
+    
+    jamflaunchDaemon="/Library/LaunchDaemons/com.jamfsoftware.task.1.plist"
+
+    if [[ "${debugMode}" == "true" ]] || [[ "${debugMode}" == "verbose" ]] ; then
+
+        if [[ $(/bin/launchctl list | grep com.jamfsoftware.task.E) ]]; then
+            preFlight "DEBUG MODE: Normally, Jamf binary check-in would be temporarily disabled"
+        else
+            quitOut "DEBUG MODE: Normally, Jamf binary check-in would be re-enabled"
+        fi
+
+    else
+
+        while [[ ! -f "${jamflaunchDaemon}" ]] ; do
+            preFlight "Waiting for installation of ${jamflaunchDaemon}"
+            sleep 0.1
+        done
+
+        if [[ $(/bin/launchctl list | grep com.jamfsoftware.task.E) ]]; then
+
+            preFlight "Temporarily disable Jamf binary check-in"
+            /bin/launchctl bootout system "${jamflaunchDaemon}"
+
+        else
+
+            preFlight "Jamf binary check-in is already disabled"
+
+        fi
+
+    fi
+
+}
+
+toggleJamfLaunchDaemonOff
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Pre-flight Check: Complete
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
 preFlight "Complete!"
-
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Setup List for Health Check Window
@@ -554,6 +602,19 @@ function buildHealthCheckWindow() {
 
 }
 
+function variableProgressText() {
+
+            if [[ "$dialogProgressText" == "true" ]]; then
+                #infoOut "Dialog progress text set to 'true', using log file progress text"
+                updateDialog "progresstext: ${inventoryProgressText}"
+            else
+                #infoOut "Dialog progress text set to 'false', using set progress text"
+                updateDialog $stockProgressText
+            fi
+        
+
+}
+
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # "Health Check" dialog
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -565,6 +626,8 @@ function recon() {
     SECONDS="0"
 
     /usr/local/bin/jamf recon -endUsername "${networkUser}" --verbose >> "$inventoryLog" &
+
+    stockProgressText="progresstext: Taking inventory of your computer …"
 
     counterRecon=0
 
@@ -581,13 +644,18 @@ function recon() {
         fi
 
         inventoryProgressText=$( tail -n1 "$inventoryLog" | sed -e 's/verbose: //g' -e 's/Found app: \/System\/Applications\///g' -e 's/Utilities\///g' -e 's/Found app: \/Applications\///g' -e 's/Running script for the extension attribute //g' )
-        updateDialog "progresstext: Taking inventory of your computer …"
+
+        variableProgressText        
 
         ((counterRecon++))
 
     done
 
         updateDialog "listitem: title: Taking Inventory, statustext: Complete, status: success"
+
+        infoOut "Delaying five seconds for dialog to catch up"
+        sleep 5
+
 }
 
 function policyErrorCheck(){
@@ -618,12 +686,13 @@ function policyCheckIn(){
 
     /usr/local/bin/jamf policy -verbose -forceNoRecon >> "$inventoryLog" &
 
+    stockProgressText="progresstext: Checking for updates on your computer …"
+
     counterPolicy=0
 
-     until [[ "$inventoryProgressText" == "No patch policies were found."* || "$inventoryProgressText" == "Removing existing launchd task /Library/LaunchDaemons/com.jamfsoftware.task.bgrecon.plist..."* || "$inventoryProgressText" == "Policy error code: 51"* ]]; do
+     until [[ "$inventoryProgressText" == "No patch policies were found."* || "$inventoryProgressText" == "Removing existing launchd task /Library/LaunchDaemons/com.jamfsoftware.task.bgrecon.plist..."* || "$inventoryProgressText" == "Policy error code:"* ]]; do
 
         progressPercentage=$( echo "scale=2 ; ( $SECONDS / $estimatedTotalSeconds ) * 100" | bc )
-        #updateDialog "progress: ${progressPercentage}"
 
         if [ $counterPolicy -eq 0 ]; then
             updateDialog "listitem: delete, title: Health Check in progress …"
@@ -642,11 +711,14 @@ function policyCheckIn(){
 
     inventoryProgressText=$( tail -n1 "$inventoryLog" | sed -e 's/verbose: //g' -e 's/Removing existing launchd task \/Library\/LaunchDaemons\/com.jamfsoftware.task.bgrecon.plist... //g')
 
-    updateDialog "progresstext: ${inventoryProgressText}"
+    variableProgressText
 
     ((counterPolicy++))
 
     done
+
+    infoOut "Delaying five seconds for dialog to catch up"
+        sleep 5
 
     updateDialog "listitem: title: Checking for updates, statustext: Complete, status: success"
 }
@@ -658,6 +730,8 @@ function protectCheckIn(){
     SECONDS="0"
 
     /Applications/JamfProtect.app/Contents/MacOS/JamfProtect checkin >> "$inventoryLog" &
+
+    stockProgressText="progresstext: Jamf Protect is a purpose-built endpoint security and mobile threat defense (MTD) for Mac and mobile devices."
 
     counterProtect=0
     
@@ -673,13 +747,17 @@ function protectCheckIn(){
             updateDialog "overlayicon: $overlayicon"
             updateDialog "listitem: title: Jamf Protect, icon: SF=network.badge.shield.half.filled,weight=bold , statustext: Checking …, status: wait"
         fi
+
     inventoryProgressText=$(tail -n1 "$inventoryLog")
 
-    updateDialog "progresstext: Jamf Protect is a purpose-built endpoint security and mobile threat defense (MTD) for Mac and mobile devices."
+    variableProgressText
     
     ((counterProtect++))
 
     done
+
+    infoOut "Delaying five seconds for dialog to catch up"
+        sleep 5
 
     updateDialog "listitem: title: Jamf Protect, statustext: Complete, status: success"
 }
@@ -691,6 +769,8 @@ function finalRecon() {
     SECONDS="0"
 
     /usr/local/bin/jamf recon -endUsername "${networkUser}" --verbose >> "$inventoryLog" &
+
+    stockProgressText="progresstext: Submitting inventory of your computer to Jamf …"
     
     counterFinalRecon=0
 
@@ -708,11 +788,14 @@ function finalRecon() {
 
     inventoryProgressText=$( tail -n1 "$inventoryLog" | sed -e 's/verbose: //g' -e 's/Found app: \/System\/Applications\///g' -e 's/Utilities\///g' -e 's/Found app: \/Applications\///g' -e 's/Running script for the extension attribute //g' )
 
-    updateDialog "progresstext: Submitting inventory of your computer to Jamf …"
+    variableProgressText
 
     ((counterFinalRecon++))
 
     done
+
+    infoOut "Delaying five seconds for dialog to catch up"
+        sleep 5
 
     updateDialog "listitem: title: Submitting Inventory, statustext: Complete, status: success"
 
@@ -959,6 +1042,28 @@ fi
 
 }
 
+function toggleJamfLaunchDaemonOn() {
+    
+    jamflaunchDaemon="/Library/LaunchDaemons/com.jamfsoftware.task.1.plist"
+
+            quitOut "Re-enabling Jamf binary check-in"
+            result="0"
+
+            until [ $result -eq 3 ]; do
+
+                /bin/launchctl bootstrap system "${jamflaunchDaemon}" && /bin/launchctl start "${jamflaunchDaemon}"
+                result="$?"
+
+                if [ $result = 3 ]; then
+                    quitOut "Starting Jamf binary check-in daemon"
+                else
+                    quitOut "Failed to start Jamf binary check-in daemon"
+                fi
+
+            done
+
+}
+
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Quit Script (thanks, @bartreadon!)
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -981,7 +1086,7 @@ function quitScript() {
         infoOut "Webhook Enabled flag set to: ${webhookEnabled}, skipping ..."
         ;;
 
-esac
+    esac
 
     notice "*** QUITTING ***"
     updateDialog "quit: "
@@ -997,6 +1102,10 @@ esac
         infoOut "Removing ${inventoryLog} …"
         rm "${inventoryLog}"
     fi
+
+    # Toggle `jamf` binary check-in back on
+        infoOut "Re-enabling Jamf binary check-in"
+        toggleJamfLaunchDaemonOn
 
     infoOut "Goodbye!"
     exit "${1}"
