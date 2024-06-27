@@ -23,6 +23,9 @@
 #   - Added `--no-rcs` to shebang of script. This addresses CVE-2024-27301. https://nvd.nist.gov/vuln/detail/CVE-2024-27301/change-record?changeRecordedOn=03/14/2024T15:15:50.680-0400
 #   - Added Jamf script parameter to show either stock progress text or read the log file in dialog window progress text
 #
+# Version 1.3.0 - 06/27/2024
+#   - Added operation modes 'Silent Self Service' and 'Silent Self Service Force' to enable a full Health Check with no dialog window
+#
 ####################################################################################################
 
 
@@ -70,7 +73,7 @@ secondsToWait="${4:-"86400"}"
 # Parameter 5: Estimated Total Seconds
 estimatedTotalSeconds="${5:-"120"}"
 
-# Parameter 6: Operation Mode [ Inventory | Inventory Force | Policy | Policy Force | Protect | Protect Force |  Self Service | Silent Inventory | Uninstall ]
+# Parameter 6: Operation Mode [ Inventory | Inventory Force | Policy | Policy Force | Protect | Protect Force |  Self Service | Silent Self Service | Silent Self Service Force | Silent | Uninstall ]
 operationMode="${6:-""}"
 
 # Parameter 7: Enables the webhook feature [ true | false ]
@@ -1180,6 +1183,15 @@ if [[ ${ageInSeconds} -le ${secondsToWait} ]]; then
             quitScript "0"
             ;;
 
+        "Silent Self Service Force" ) # Full Health Check, sans swiftDialog
+            infoOut "Full Health Check, sans swiftDialog …"
+            /usr/local/bin/jamf recon -endUsername "${loggedInUser}"
+            /usr/local/bin/jamf policy -endUsername "${loggedInUser}"
+            /Applications/JamfProtect.app/Contents/MacOS/JamfProtect checkin
+            /usr/local/bin/jamf recon -endUsername "${loggedInUser}"
+            quitScript "0"
+            ;;
+
         "Silent" ) # Don't leverage swiftDialog
             notice "Inventory will NOT be updated …"
             quitScript "0"
@@ -1258,6 +1270,15 @@ elif [[ ${ageInSeconds} -ge ${secondsToWait} ]]; then
 
         "Self Service" ) # When executed via Self Service, *always* update Health Check 
             selfServiceInventoryUpdate
+            quitScript "0"
+            ;;
+
+        "Silent Self Service" ) # Full Health Check, sans swiftDialog
+            infoOut "Full Health Check, sans swiftDialog …"
+            /usr/local/bin/jamf recon -endUsername "${loggedInUser}"
+            /usr/local/bin/jamf policy -endUsername "${loggedInUser}"
+            /Applications/JamfProtect.app/Contents/MacOS/JamfProtect checkin
+            /usr/local/bin/jamf recon -endUsername "${loggedInUser}"
             quitScript "0"
             ;;
 
