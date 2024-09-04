@@ -1,5 +1,7 @@
 # Health Check
 
+![](https://img.shields.io/github/v/release/AndrewMBarnett/HealthCheck)&nbsp;![](https://img.shields.io/github/downloads/AndrewMBarnett/HealthCheck/latest/total)
+
 Health Check is a script to update progress with swiftDialog including Inventory, Policy Check In, Jamf Protect Check In.
 
 Macadmins Slack channel ([#healthcheck](https://macadmins.slack.com/archives/C078DHD29K7))
