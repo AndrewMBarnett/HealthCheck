@@ -1,6 +1,8 @@
 # Health Check
 
-![](https://img.shields.io/github/v/release/AndrewMBarnett/HealthCheck)&nbsp;![](https://img.shields.io/github/downloads/AndrewMBarnett/HealthCheck/latest/total)
+![](https://img.shields.io/github/v/release/AndrewMBarnett/HealthCheck)&nbsp;![](https://img.shields.io/github/downloads/AndrewMBarnett/HealthCheck/latest/total)&nbsp;![](https://img.shields.io/badge/macOS-12.0%2B-success)
+
+![GitHub issues](https://img.shields.io/github/issues-raw/AndrewMBarnett/HealthCheck) ![GitHub closed issues](https://img.shields.io/github/issues-closed-raw/AndrewMBarnett/HealthCheck) ![GitHub pull requests](https://img.shields.io/github/issues-pr-raw/AndrewMBarnett/HealthCheck) ![GitHub closed pull requests](https://img.shields.io/github/issues-pr-closed-raw/AndrewMBarnett/HealthCheck)
 
 Health Check is a script to update progress with swiftDialog including Inventory, Policy Check In, Jamf Protect Check In.
 
