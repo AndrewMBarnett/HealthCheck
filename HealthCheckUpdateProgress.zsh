@@ -26,6 +26,44 @@
 # Version 1.3.0 - 06/27/2024
 #   - Added operation modes 'Silent Self Service' and 'Silent Self Service Force' to enable a full Health Check with no dialog window
 #
+# Version 1.4.0 - 04/28/2026
+#   - Fixed scriptVersion mismatch (was incorrectly set to 1.2.0)
+#   - Fixed `uninstall` calling undefined `info` function (renamed to `infoOut`)
+#   - Fixed `policyErrorCheck` dialog never being displayed (added missing eval)
+#   - Fixed `currentLoggedInUser` recursive call inside until loop (stack overflow risk)
+#   - Fixed `variableProgressText` unquoted $stockProgressText variable (word-splitting bug)
+#   - Fixed `toggleJamfLaunchDaemonOn` infinite loop (added 10-attempt max retry guard)
+#   - Fixed broken xmllint command in `jamfProURL` fallback branch
+#   - Fixed `quitScript` called without exit code argument in `policyCheckIn`
+#   - Fixed Silent Self Service Force calling JamfProtect unconditionally when not installed
+#   - Added 300-second timeout to `recon` and `finalRecon` loops
+#   - Added 1-second startup delay after dialog launch in `buildHealthCheckWindow`
+#   - Added --fail and --max-time 30 to webhook curl calls
+#   - Fixed `supportTeamHyperlink` doubling the https:// scheme if already present in URL
+#   - Fixed missing colon on `progress:` command in policyCheckIn, protectCheckIn, finalRecon
+#
+# Version 1.5.0 - 04/28/2026
+#   - Added Parameter 11 (policyTrigger): optional Jamf policy event trigger name; when set,
+#     policyCheckIn uses `jamf policy -event <trigger>` instead of a general check-in
+#   - Added -doNotRestart -noInteraction -skipAppUpdates to policyCheckIn jamf call to prevent
+#     embedded policy actions from interfering with Health Check progress detection
+#   - Reset inventoryProgressText at the start of each polling function (recon, policyCheckIn,
+#     protectCheckIn, finalRecon) to prevent stale output from a previous step causing a false
+#     early loop exit in the next step
+#
+# Version 1.5.1 - 04/28/2026
+#   - Replaced policyCheckIn string-based completion detection with PID-based detection:
+#     captures the jamf policy PID and loops until that process exits, eliminating false
+#     early exits and the broken "Removing existing launchd task" sed-stripping bug
+#   - Added 300-second timeout to policyCheckIn (was missing unlike recon/finalRecon)
+#   - Simplified policyCheckIn sed to only strip verbose: prefix; raw log line now used
+#     directly for error code detection
+#
+# Version 1.5.2 - 04/28/2026
+#   - Hardened overlay icon extraction: validates that Self Service has a custom Icon\r file
+#     before attempting extraction, and confirms the resulting icns file is non-empty before
+#     using it; falls back to no overlay icon with a preflight log message on either failure
+#
 ####################################################################################################
 
 
@@ -39,7 +77,7 @@
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 
 # Script Version & Client-side Log
-scriptVersion="1.2.0"
+scriptVersion="1.5.2"
 scriptLog="/var/log/healthCheckTest.log"
 
 # Display an inventory progress dialog, even if an inventory update is not required
@@ -87,6 +125,9 @@ slackURL="${9:-""}"
 
 # Paramter 10: Update progress text to either be reading off the running log file (true) or to only show set progress text to display at each step (false) [ true | false (default) ]
 dialogProgressText="${10:-"false"}"
+
+# Parameter 11: Jamf policy event trigger name for policyCheckIn; leave blank to run a general check-in
+policyTrigger="${11:-""}"
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Organization Variables
@@ -142,8 +183,19 @@ useOverlayIcon="true"								# Toggles swiftDialog to use an overlay icon [ true
 
 # Create `overlayicon` from Self Service's custom icon (thanks, @meschwartz!)
 if [[ "$useOverlayIcon" == "true" ]]; then
-    xxd -p -s 260 "$(defaults read /Library/Preferences/com.jamfsoftware.jamf self_service_app_path)"/Icon$'\r'/..namedfork/rsrc | xxd -r -p > /var/tmp/overlayicon.icns
-    overlayicon="/var/tmp/overlayicon.icns"
+    selfServiceAppPath="$(defaults read /Library/Preferences/com.jamfsoftware.jamf self_service_app_path 2>/dev/null)"
+    if [[ -f "${selfServiceAppPath}/Icon"$'\r' ]]; then
+        xxd -p -s 260 "${selfServiceAppPath}/Icon"$'\r'"/..namedfork/rsrc" | xxd -r -p > /var/tmp/overlayicon.icns
+        if [[ -s /var/tmp/overlayicon.icns ]]; then
+            overlayicon="/var/tmp/overlayicon.icns"
+        else
+            preFlight "Overlay icon extraction produced empty file; disabling overlay icon"
+            overlayicon=""
+        fi
+    else
+        preFlight "No custom icon found on Self Service app; disabling overlay icon"
+        overlayicon=""
+    fi
 else
     overlayicon=""
 fi
@@ -158,7 +210,11 @@ supportTeamName="Add IT Support"
 supportTeamPhone="Add IT Phone Number"
 supportTeamEmail="Add email"
 supportTeamWebsite="Add IT Help site"
-supportTeamHyperlink="[${supportTeamWebsite}](https://${supportTeamWebsite})"
+_supportWebsiteURL="${supportTeamWebsite}"
+if [[ "${_supportWebsiteURL}" != http://* ]] && [[ "${_supportWebsiteURL}" != https://* ]]; then
+    _supportWebsiteURL="https://${_supportWebsiteURL}"
+fi
+supportTeamHyperlink="[${supportTeamWebsite}](${_supportWebsiteURL})"
 
 # Create the help message based on Support Team variables
 helpMessage="If you need assistance, please contact ${supportTeamName}:  \n- **Telephone:** ${supportTeamPhone}  \n- **Email:** ${supportTeamEmail}  \n- **Help Website:** ${supportTeamHyperlink}  \n\n**Computer Information:**  \n- **Operating System:**  $osVersion ($osBuild)  \n- **Serial Number:** $serialNumber  \n- **Dialog:** $dialogVersion  \n- **Started:** $timestamp  \n- **Script Version:** $scriptVersion"
@@ -492,15 +548,15 @@ function currentLoggedInUser() {
     loggedInUser=$( echo "show State:/Users/ConsoleUser" | scutil | awk '/Name :/ { print $3 }' )
     preFlight "Current Logged-in User: ${loggedInUser}"
 
+    until { [[ "${loggedInUser}" != "_mbsetupuser" ]] || [[ "${counter}" -gt "180" ]]; } && { [[ "${loggedInUser}" != "loginwindow" ]] || [[ "${counter}" -gt "30" ]]; } ; do
+        preFlight "Logged-in User Counter: ${counter}"
+        sleep 2
+        ((counter++))
+        loggedInUser=$( echo "show State:/Users/ConsoleUser" | scutil | awk '/Name :/ { print $3 }' )
+    done
+
     networkUser="$(dscl . -read /Users/$loggedInUser | grep "NetworkUser" | cut -d " " -f 2)"
     preFlight "Network User is $networkUser"
-
-    until { [[ "${loggedInUser}" != "_mbsetupuser" ]] || [[ "${counter}" -gt "180" ]]; } && { [[ "${loggedInUser}" != "loginwindow" ]] || [[ "${counter}" -gt "30" ]]; } ; do
-    preFlight "Logged-in User Counter: ${counter}"
-    currentLoggedInUser
-    sleep 2
-    ((counter++))
-    done
 
     loggedInUserFullname=$( id -F "${loggedInUser}" )
     loggedInUserFirstname=$( echo "$loggedInUserFullname" | sed -E 's/^.*, // ; s/([^ ]*).*/\1/' | sed 's/\(.\{25\}\).*/\1…/' | awk '{print ( $0 == toupper($0) ? toupper(substr($0,1,1))substr(tolower($0),2) : toupper(substr($0,1,1))substr($0,2) )}' )
@@ -570,6 +626,7 @@ function buildHealthCheckWindow() {
 
     notice "Create Health Check dialog …"
     eval "$dialogHealthCheck" &
+    sleep 1
 
     updateDialog "listitem: delete, title: Health Check in progress …"
 
@@ -612,7 +669,7 @@ function variableProgressText() {
                 updateDialog "progresstext: ${inventoryProgressText}"
             else
                 #infoOut "Dialog progress text set to 'false', using set progress text"
-                updateDialog $stockProgressText
+                updateDialog "$stockProgressText"
             fi
         
 
@@ -625,8 +682,9 @@ function variableProgressText() {
 function recon() {
 
     notice "Inventory Update dialog …"
-    
+
     SECONDS="0"
+    inventoryProgressText=""
 
     /usr/local/bin/jamf recon -endUsername "${networkUser}" --verbose >> "$inventoryLog" &
 
@@ -634,10 +692,10 @@ function recon() {
 
     counterRecon=0
 
-    until [[ "$inventoryProgressText" == "Submitting data to"* ]]; do
+    until [[ "$inventoryProgressText" == "Submitting data to"* ]] || [[ $SECONDS -ge 300 ]]; do
 
         progressPercentage=$( echo "scale=2 ; ( $SECONDS / $estimatedTotalSeconds ) * 100" | bc )
-        
+
         if [ $counterRecon -eq 0 ]; then
             updateDialog "listitem: delete, title: Health Check in progress …"
             updateDialog "progress:"
@@ -663,21 +721,23 @@ function recon() {
 
 function policyErrorCheck(){
 
-            error "Jamf was already checking in. Sending message to try Health Check again."
+    error "Jamf was already checking in. Sending message to try Health Check again."
 
-            dialogPolicyError="$dialogBinary \ 
-            --title \"$title\" \
-            --icon \"$icon\" \
-            --overlayicon \"$overlayIcon\" \
-            --message \"Jamf was already checking in. Please run Health Check again\" \
-            --windowbuttons min \
-            --moveable \
-            --position topright \
-            --timer 60 \
-            --quitkey k \
-            --button1text \"Close\" \
-            --hidetimerbar \
-            --style \"mini\" "
+    dialogPolicyError="$dialogBinary \
+    --title \"$title\" \
+    --icon \"$icon\" \
+    --overlayicon \"$overlayicon\" \
+    --message \"Jamf was already checking in. Please run Health Check again\" \
+    --windowbuttons min \
+    --moveable \
+    --position topright \
+    --timer 60 \
+    --quitkey k \
+    --button1text \"Close\" \
+    --hidetimerbar \
+    --style \"mini\" "
+
+    eval "$dialogPolicyError" &
 
 }
 
@@ -686,42 +746,51 @@ function policyCheckIn(){
     notice "Running Policy Check"
 
     SECONDS="0"
+    inventoryProgressText=""
 
-    /usr/local/bin/jamf policy -verbose -forceNoRecon >> "$inventoryLog" &
+    if [[ -n "${policyTrigger}" ]]; then
+        infoOut "Policy trigger set to '${policyTrigger}'; running targeted policy check-in …"
+        /usr/local/bin/jamf policy -event "${policyTrigger}" -verbose -forceNoRecon -doNotRestart -noInteraction -skipAppUpdates >> "$inventoryLog" &
+    else
+        infoOut "No policy trigger set; running general policy check-in …"
+        /usr/local/bin/jamf policy -verbose -forceNoRecon -doNotRestart -noInteraction -skipAppUpdates >> "$inventoryLog" &
+    fi
+
+    jamfPolicyPID=$!
 
     stockProgressText="progresstext: Checking for updates on your computer …"
 
     counterPolicy=0
 
-     until [[ "$inventoryProgressText" == "No patch policies were found."* || "$inventoryProgressText" == "Removing existing launchd task /Library/LaunchDaemons/com.jamfsoftware.task.bgrecon.plist..."* || "$inventoryProgressText" == "Policy error code:"* ]]; do
+    until ! kill -0 "$jamfPolicyPID" 2>/dev/null || [[ $SECONDS -ge 300 ]]; do
 
         progressPercentage=$( echo "scale=2 ; ( $SECONDS / $estimatedTotalSeconds ) * 100" | bc )
 
         if [ $counterPolicy -eq 0 ]; then
             updateDialog "listitem: delete, title: Health Check in progress …"
-            updateDialog "progress"
+            updateDialog "progress:"
             updateDialog "icon: SF=laptopcomputer.and.arrow.down,weight=bold"
             updateDialog "overlayicon: $overlayicon"
             updateDialog "listitem: title: Checking for updates, icon: SF=laptopcomputer.and.arrow.down,weight=bold, statustext: Checking …, status: wait"
         fi
 
-        policyError=$( tail -n1 "$inventoryLog" | grep 'Policy error code: 51')
+        policyRawLine=$( tail -n1 "$inventoryLog" )
 
-        if [[ -n "$policyError" ]]; then
+        if [[ "$policyRawLine" == *"Policy error code: 51"* ]]; then
             policyErrorCheck
-            quitScript
+            quitScript "1"
         fi
 
-    inventoryProgressText=$( tail -n1 "$inventoryLog" | sed -e 's/verbose: //g' -e 's/Removing existing launchd task \/Library\/LaunchDaemons\/com.jamfsoftware.task.bgrecon.plist... //g')
+        inventoryProgressText=$( echo "$policyRawLine" | sed 's/verbose: //g' )
 
-    variableProgressText
+        variableProgressText
 
-    ((counterPolicy++))
+        ((counterPolicy++))
 
     done
 
     infoOut "Delaying five seconds for dialog to catch up"
-        sleep 5
+    sleep 5
 
     updateDialog "listitem: title: Checking for updates, statustext: Complete, status: success"
 }
@@ -731,6 +800,7 @@ function protectCheckIn(){
     notice "Running Protect Check-In"
 
     SECONDS="0"
+    inventoryProgressText=""
 
     /Applications/JamfProtect.app/Contents/MacOS/JamfProtect checkin >> "$inventoryLog" &
 
@@ -745,7 +815,7 @@ function protectCheckIn(){
     
         if [ $counterProtect -eq 0 ]; then
             updateDialog "listitem: delete, title: Health Check in progress …"
-            updateDialog "progress"
+            updateDialog "progress:"
             updateDialog "icon: SF=network.badge.shield.half.filled,weight=bold"
             updateDialog "overlayicon: $overlayicon"
             updateDialog "listitem: title: Jamf Protect, icon: SF=network.badge.shield.half.filled,weight=bold , statustext: Checking …, status: wait"
@@ -770,6 +840,7 @@ function finalRecon() {
     notice "Running Final Recon"
 
     SECONDS="0"
+    inventoryProgressText=""
 
     /usr/local/bin/jamf recon -endUsername "${networkUser}" --verbose >> "$inventoryLog" &
 
@@ -777,13 +848,13 @@ function finalRecon() {
     
     counterFinalRecon=0
 
-    until [[ "$inventoryProgressText" == "Submitting data to"* ]]; do
+    until [[ "$inventoryProgressText" == "Submitting data to"* ]] || [[ $SECONDS -ge 300 ]]; do
 
     progressPercentage=$( echo "scale=2 ; ( $SECONDS / $estimatedTotalSeconds ) * 100" | bc )
-        
+
     if [ $counterFinalRecon -eq 0 ]; then
             updateDialog "listitem: delete, title: Health Check in progress …"
-            updateDialog "progress"
+            updateDialog "progress:"
             updateDialog "icon: SF=icloud.and.arrow.up,weight=bold"
             updateDialog "overlayicon: $overlayicon"
             updateDialog "listitem: title: Submitting Inventory, icon: SF=icloud.and.arrow.up,weight=bold, statustext: Checking …, status: wait"
@@ -903,8 +974,8 @@ if grep -q "$search_text" "$scriptLog" ; then
         fi
 else
         infoOut "Jamf Pro URL still not found, searching now with full recon"
-        reconRaw=$( eval "${jamfBinary} recon ${reconOptions} -verbose | tee -a ${inventoryLog}" )
-        computerID=$( echo "${reconRaw}" | grep '<computer_id>' | xmllint --xpath xmllint --xpath '/computer_id/text()' - )
+        reconRaw=$( ${jamfBinary} recon ${reconOptions} -verbose | tee -a "${inventoryLog}" )
+        computerID=$( echo "${reconRaw}" | grep -o '<computer_id>[^<]*</computer_id>' | sed 's/.*<computer_id>\(.*\)<\/computer_id>.*/\1/' )
         jamfProComputerURL="${jamfProURL}computers.html?id=${computerID}&o=r"
         infoOut "Jamf Computer URL: $jamfProComputerURL"
 fi   
@@ -924,7 +995,7 @@ else
         supportTeamHyperlink="https://www.slack.com"
     fi
     infoOut "Sending Slack WebHook"
-    curl -s -X POST -H 'Content-type: application/json' \
+    curl -s --fail --max-time 30 -X POST -H 'Content-type: application/json' \
         -d \
         '{
 	"blocks": [
@@ -1039,31 +1110,38 @@ else
 }'
 
     # Send the JSON payload using curl
-    curl -s -X POST -H "Content-Type: application/json" -d "$jsonPayload" "$teamsURL"
+    curl -s --fail --max-time 30 -X POST -H "Content-Type: application/json" -d "$jsonPayload" "$teamsURL"
 
 fi
 
 }
 
 function toggleJamfLaunchDaemonOn() {
-    
+
     jamflaunchDaemon="/Library/LaunchDaemons/com.jamfsoftware.task.1.plist"
 
-            quitOut "Re-enabling Jamf binary check-in"
-            result="0"
+    quitOut "Re-enabling Jamf binary check-in"
+    result="0"
+    maxRetries=10
+    retryCount=0
 
-            until [ $result -eq 3 ]; do
+    until [ $result -eq 3 ] || [ $retryCount -ge $maxRetries ]; do
 
-                /bin/launchctl bootstrap system "${jamflaunchDaemon}" && /bin/launchctl start "${jamflaunchDaemon}"
-                result="$?"
+        /bin/launchctl bootstrap system "${jamflaunchDaemon}" && /bin/launchctl start "${jamflaunchDaemon}"
+        result="$?"
+        ((retryCount++))
 
-                if [ $result = 3 ]; then
-                    quitOut "Starting Jamf binary check-in daemon"
-                else
-                    quitOut "Failed to start Jamf binary check-in daemon"
-                fi
+        if [ $result -eq 3 ]; then
+            quitOut "Jamf binary check-in daemon started successfully"
+        else
+            quitOut "Failed to start Jamf binary check-in daemon (attempt ${retryCount}/${maxRetries})"
+        fi
 
-            done
+    done
+
+    if [ $retryCount -ge $maxRetries ] && [ $result -ne 3 ]; then
+        quitOut "Warning: Could not re-enable Jamf binary check-in after ${maxRetries} attempts"
+    fi
 
 }
 
@@ -1135,7 +1213,7 @@ function updateDialog() {
 function uninstall() {
 
     warning "*** UNINSTALLING ${humanReadableScriptName} ***"
-    info "Reset inventoryDelayFilepath … "
+    infoOut "Reset inventoryDelayFilepath … "
     infoOut "Removing '${inventoryDelayFilepath}' … "
     rm -f "${inventoryDelayFilepath}"
     infoOut "Removed '${inventoryDelayFilepath}'"
@@ -1187,7 +1265,12 @@ if [[ ${ageInSeconds} -le ${secondsToWait} ]]; then
             infoOut "Full Health Check, sans swiftDialog …"
             /usr/local/bin/jamf recon -endUsername "${loggedInUser}"
             /usr/local/bin/jamf policy -endUsername "${loggedInUser}"
-            /Applications/JamfProtect.app/Contents/MacOS/JamfProtect checkin
+            if command -v /Applications/JamfProtect.app/Contents/MacOS/JamfProtect &> /dev/null; then
+                infoOut "Jamf Protect is installed. Running check-in …"
+                /Applications/JamfProtect.app/Contents/MacOS/JamfProtect checkin
+            else
+                infoOut "Jamf Protect is not installed. Skipping …"
+            fi
             /usr/local/bin/jamf recon -endUsername "${loggedInUser}"
             quitScript "0"
             ;;
