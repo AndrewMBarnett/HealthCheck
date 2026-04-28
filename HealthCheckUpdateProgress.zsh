@@ -64,6 +64,16 @@
 #     before attempting extraction, and confirms the resulting icns file is non-empty before
 #     using it; falls back to no overlay icon with a preflight log message on either failure
 #
+# Version 1.6.0 - 04/28/2026
+#   - Fixed scriptLog filename: changed healthCheckTest.log to healthCheck.log
+#   - Fixed dialogInstall calling quitScript without an exit code argument
+#   - Added networkUser fallback to loggedInUser for local (non-network) accounts so
+#     recon and finalRecon always pass a valid username to jamf
+#   - Fixed protectCheckIn to use PID-based completion detection (consistent with
+#     policyCheckIn); increased timeout from 20 seconds to 120 seconds
+#   - Fixed Silent Self Service (stale branch) calling JamfProtect unconditionally
+#   - Fixed Protect (stale branch) calling JamfProtect without checking if it is installed
+#
 ####################################################################################################
 
 
@@ -77,8 +87,8 @@
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 
 # Script Version & Client-side Log
-scriptVersion="1.5.2"
-scriptLog="/var/log/healthCheckTest.log"
+scriptVersion="1.6.0"
+scriptLog="/var/log/healthCheck.log"
 
 # Display an inventory progress dialog, even if an inventory update is not required
 displayProgessSansUpdate="true"
@@ -438,7 +448,7 @@ function dialogInstall() {
         osascript -e 'display dialog "Please advise your Support Representative of the following error:\r\r• Dialog Team ID verification failed\r\r" with title "Setup Your Mac: Error" buttons {"Close"} with icon caution'
         completionActionOption="Quit"
         exitCode="1"
-        quitScript
+        quitScript "1"
 
     fi
 
@@ -556,6 +566,10 @@ function currentLoggedInUser() {
     done
 
     networkUser="$(dscl . -read /Users/$loggedInUser | grep "NetworkUser" | cut -d " " -f 2)"
+    if [[ -z "$networkUser" ]]; then
+        preFlight "No network user found; falling back to loggedInUser for recon username"
+        networkUser="$loggedInUser"
+    fi
     preFlight "Network User is $networkUser"
 
     loggedInUserFullname=$( id -F "${loggedInUser}" )
@@ -803,16 +817,16 @@ function protectCheckIn(){
     inventoryProgressText=""
 
     /Applications/JamfProtect.app/Contents/MacOS/JamfProtect checkin >> "$inventoryLog" &
+    jamfProtectPID=$!
 
     stockProgressText="progresstext: Jamf Protect is a purpose-built endpoint security and mobile threat defense (MTD) for Mac and mobile devices."
 
     counterProtect=0
-    
-    until [[ "$inventoryProgressText" == "verbose: Timeout: 10"* || $SECONDS -ge 20 ]]; do
-    
-    progressPercentage=$(echo "scale=2 ; ($SECONDS / $estimatedTotalSeconds) * 100" | bc)
-    #updateDialog "progress: ${progressPercentage}"
-    
+
+    until ! kill -0 "$jamfProtectPID" 2>/dev/null || [[ $SECONDS -ge 120 ]]; do
+
+        progressPercentage=$(echo "scale=2 ; ($SECONDS / $estimatedTotalSeconds) * 100" | bc)
+
         if [ $counterProtect -eq 0 ]; then
             updateDialog "listitem: delete, title: Health Check in progress …"
             updateDialog "progress:"
@@ -821,11 +835,11 @@ function protectCheckIn(){
             updateDialog "listitem: title: Jamf Protect, icon: SF=network.badge.shield.half.filled,weight=bold , statustext: Checking …, status: wait"
         fi
 
-    inventoryProgressText=$(tail -n1 "$inventoryLog")
+        inventoryProgressText=$(tail -n1 "$inventoryLog")
 
-    variableProgressText
-    
-    ((counterProtect++))
+        variableProgressText
+
+        ((counterProtect++))
 
     done
 
@@ -1360,7 +1374,12 @@ elif [[ ${ageInSeconds} -ge ${secondsToWait} ]]; then
             infoOut "Full Health Check, sans swiftDialog …"
             /usr/local/bin/jamf recon -endUsername "${loggedInUser}"
             /usr/local/bin/jamf policy -endUsername "${loggedInUser}"
-            /Applications/JamfProtect.app/Contents/MacOS/JamfProtect checkin
+            if command -v /Applications/JamfProtect.app/Contents/MacOS/JamfProtect &> /dev/null; then
+                infoOut "Jamf Protect is installed. Running check-in …"
+                /Applications/JamfProtect.app/Contents/MacOS/JamfProtect checkin
+            else
+                infoOut "Jamf Protect is not installed. Skipping …"
+            fi
             /usr/local/bin/jamf recon -endUsername "${loggedInUser}"
             quitScript "0"
             ;;
@@ -1390,9 +1409,14 @@ elif [[ ${ageInSeconds} -ge ${secondsToWait} ]]; then
 
         "Protect" ) # Update inventory, sans swiftDialog
             infoOut "Checking in with Jamf Protect, sans swiftDialog …"
-            /Applications/JamfProtect.app/Contents/MacOS/JamfProtect checkin
+            if command -v /Applications/JamfProtect.app/Contents/MacOS/JamfProtect &> /dev/null; then
+                infoOut "Jamf Protect is installed. Running check-in …"
+                /Applications/JamfProtect.app/Contents/MacOS/JamfProtect checkin
+            else
+                infoOut "Jamf Protect is not installed. Skipping …"
+            fi
             quitScript "0"
-            ;;   
+            ;;
 
         "Uninstall" ) # Remove client-side files
             infoOut "Sorry to see you go …"
