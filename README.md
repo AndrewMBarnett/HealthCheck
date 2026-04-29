@@ -175,12 +175,3 @@ All activity is logged to `/var/log/healthCheck.log`. Log entries are prefixed w
 
 ---
 
-## Credits
-
-- **[Dan Snelson](https://snelson.us)** — original Inventory Update Progress concept
-- **[@acodega](https://github.com/acodega)** — swiftDialog install/check function
-- **[@bartreadon](https://github.com/bartreadon)** — quit script pattern
-- **[@robjschroeder](https://github.com/robjschroeder)** — Jamf Launch Daemon toggle
-- **[@meschwartz](https://github.com/meschwartz)** — Self Service overlay icon extraction
-- **[@nirvanaboi10](https://github.com/nirvanaboi10)** — Microsoft Teams webhook
-- **[Bart Reardon](https://github.com/bartreardon)** — [swiftDialog](https://github.com/swiftDialog/swiftDialog)
