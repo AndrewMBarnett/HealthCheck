@@ -155,6 +155,9 @@ organizationDirectory="/private/var/tmp/"
 # Inventory Delay File
 inventoryDelayFilepath="${organizationDirectory}.${scriptName}"
 
+# Toggles swiftDialog to use an overlay icon 
+useOverlayIcon="true" # [ true (default) | false ]
+
 
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -189,15 +192,12 @@ fi
 
 ### Overlay Icon ###
 
-useOverlayIcon="true"								# Toggles swiftDialog to use an overlay icon [ true (default) | false ]
-
 # Create `overlayicon` from Self Service's custom icon (thanks, @meschwartz!)
 if [[ "$useOverlayIcon" == "true" ]]; then
-    selfServiceAppPath="$(defaults read /Library/Preferences/com.jamfsoftware.jamf self_service_app_path 2>/dev/null)"
-    if [[ -f "${selfServiceAppPath}/Icon"$'\r' ]]; then
-        xxd -p -s 260 "${selfServiceAppPath}/Icon"$'\r'"/..namedfork/rsrc" | xxd -r -p > /var/tmp/overlayicon.icns
+    selfServiceAppPath="/Applications/Self Service+.app"
+    if [[ -f "${selfServiceAppPath}/AppIcon" ]]; then
         if [[ -s /var/tmp/overlayicon.icns ]]; then
-            overlayicon="/var/tmp/overlayicon.icns"
+            overlayicon="$selfServiceAppPath"
         else
             preFlight "Overlay icon extraction produced empty file; disabling overlay icon"
             overlayicon=""
